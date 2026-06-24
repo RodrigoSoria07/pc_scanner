@@ -30,20 +30,27 @@ sospechosos y te muestra **dónde están alojados** (ruta exacta) y con qué **n
 
 ---
 
-## 🚀 Uso
+## 🚀 Instalación (comando `scan`)
+
+Corré el instalador **una sola vez**. Registra el comando `scan` en tu perfil de PowerShell:
 
 ```powershell
-# Escaneo estándar (últimos 14 días para archivos recientes)
-.\scan.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
 
-# Acotar la ventana de archivos recientes a 7 días
-.\scan.ps1 -Days 7
+Después, abrí una **nueva** ventana de PowerShell y ya podés usarlo desde cualquier carpeta:
 
-# Escaneo profundo: recorre todo el perfil de usuario (más lento)
-.\scan.ps1 -Days 30 -Full
+```powershell
+scan                # escaneo estándar
+scan -Days 7        # acota archivos recientes a 7 días
+scan -Full          # escaneo profundo de todo el perfil (más lento)
+scan -NoAnim        # sin animaciones
+```
 
-# Sin animaciones (intro Matrix, efecto tipeo, etc.)
-.\scan.ps1 -NoAnim
+Para quitar el comando del perfil:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Uninstall
 ```
 
 > 🟢 **Modo "consola hacker":** al arrancar muestra una lluvia estilo Matrix, un banner
@@ -51,14 +58,22 @@ sospechosos y te muestra **dónde están alojados** (ruta exacta) y con qué **n
 > máquina de escribir. Las animaciones se **desactivan solas** si mandás la salida a un
 > archivo, o podés apagarlas con `-NoAnim`.
 
-Si Windows bloquea la ejecución de scripts, corré con bypass puntual (no cambia tu política global):
+> 💡 **Tip:** ejecutá PowerShell **como Administrador** para que algunos chequeos
+> (servicios, tareas de otros usuarios) sean completos.
+
+### Sin instalar (uso directo)
+
+Si preferís no tocar tu perfil, podés correrlo directamente desde la carpeta del proyecto:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scan.ps1
 ```
 
-> 💡 **Tip:** ejecutá PowerShell **como Administrador** para que algunos chequeos
-> (servicios, tareas de otros usuarios) sean completos.
+O desde CMD / con la carpeta en el `PATH`, usando el wrapper incluido:
+
+```cmd
+scan.cmd -Days 7
+```
 
 ### Parámetros
 
