@@ -22,7 +22,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $repo   = 'https://raw.githubusercontent.com/RodrigoSoria07/pc_scanner/main'
 $target = Join-Path $env:LOCALAPPDATA 'pc_scanner'
-$files  = @('scan.ps1', 'install.ps1', 'scan.cmd')
+$files  = @('scan.ps1', 'install.ps1', 'scan.cmd', 'clean.ps1')
 
 Write-Host ""
 Write-Host "  Instalando pc_scanner desde GitHub..." -ForegroundColor Cyan

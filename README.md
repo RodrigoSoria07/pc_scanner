@@ -67,6 +67,22 @@ scan -Full          # escaneo profundo de todo el perfil (más lento)
 scan -NoAnim        # sin animaciones
 ```
 
+### 🧹 Limpiar temporales (comando `clean`)
+
+Aparte del scanner, se instala el comando `clean`, que **borra los temporales**
+de usuario (`%TEMP%`) y del sistema (`C:\Windows\Temp`) y te muestra el
+**rendimiento antes vs después** (disco libre, tamaño de temporales, CPU y RAM):
+
+```powershell
+clean           # pide confirmación antes de borrar
+clean -Force    # borra sin preguntar
+```
+
+Los archivos en uso se saltean solos (no se fuerza el cierre de nada).
+
+> ℹ️ Limpiar temporales libera **espacio en disco**, no reduce la CPU. Los
+> valores de CPU/RAM se muestran solo como referencia.
+
 Para quitar el comando del perfil:
 
 ```powershell

@@ -30,14 +30,21 @@ if (-not (Test-Path $script)) {
     Write-Host "ERROR: no encuentro scan.ps1 junto a este instalador." -ForegroundColor Red
     exit 1
 }
+$cleanScript = Join-Path $PSScriptRoot 'clean.ps1'
 
 # Marcadores para poder actualizar/quitar el bloque sin tocar el resto del perfil.
 $markerStart = '# >>> comando scan (virus-scanner) >>>'
 $markerEnd   = '# <<< comando scan (virus-scanner) <<<'
 
+$cleanFn = ''
+if (Test-Path $cleanScript) {
+    $cleanFn = "function clean { powershell -NoProfile -ExecutionPolicy Bypass -File `"$cleanScript`" @args }"
+}
+
 $block = @"
 $markerStart
 function scan { powershell -NoProfile -ExecutionPolicy Bypass -File "$script" @args }
+$cleanFn
 $markerEnd
 "@
 
