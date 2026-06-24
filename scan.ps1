@@ -14,7 +14,12 @@
       - Tareas programadas con acciones sospechosas.
       - Servicios cuyo binario esta en ubicaciones de usuario o sin firmar.
       - Procesos en ejecucion corriendo desde carpetas temporales/usuario.
+      - Conexiones de red de procesos sospechosos (malware "llamando a casa").
       - Ejecutables recientes en zonas de riesgo (Temp, AppData, Downloads...).
+
+    Ademas muestra una seccion de OPTIMIZACION (no de seguridad): lista los
+    programas que arrancan con Windows y marca cuales son optimizables para
+    acelerar el arranque.
 
 .PARAMETER Days
     Antiguedad (en dias) para considerar un ejecutable como "reciente".
@@ -653,6 +658,116 @@ function Scan-RecentExecutables {
     }
 }
 
+function Scan-NetworkConnections {
+    Write-Section "Conexiones de red sospechosas"
+    try {
+        $conns = Get-NetTCPConnection -ErrorAction Stop |
+            Where-Object { $_.State -in @('Established', 'Listen') }
+    } catch {
+        Write-Host "  (No se pudieron leer las conexiones de red)" -ForegroundColor DarkGray
+        return
+    }
+
+    # Cache PID -> proceso para resolver rutas sin re-consultar.
+    $procCache = @{}
+    Get-Process -ErrorAction SilentlyContinue | ForEach-Object { $procCache[[int]$_.Id] = $_ }
+
+    $loopback = @('127.0.0.1', '::1', '0.0.0.0', '::', '')
+    $estab = 0; $listen = 0
+    $found = $false
+    $seen = New-Object System.Collections.Generic.HashSet[string]
+
+    foreach ($c in $conns) {
+        if ($c.State -eq 'Established') { $estab++ } else { $listen++ }
+
+        $proc = $procCache[[int]$c.OwningProcess]
+        $path = if ($proc) { $proc.Path } else { $null }
+        $pname = if ($proc) { $proc.ProcessName } else { "PID $($c.OwningProcess)" }
+        if (-not $path) { continue }   # sin ruta no podemos evaluar (suele ser del sistema)
+
+        $risk = $null
+        $reasons = @()
+
+        if (Test-IsUserPath $path) {
+            $risk = 'Alto'
+            if ($c.State -eq 'Listen') {
+                $reasons += "proceso en carpeta de usuario ESCUCHANDO en puerto $($c.LocalPort)"
+            } else {
+                $reasons += "proceso en carpeta de usuario con conexion saliente"
+            }
+        } elseif ($c.State -eq 'Established' -and $c.RemoteAddress -notin $loopback -and -not (Test-IsTrustedPath $path)) {
+            $sig = Get-SignatureState $path
+            if ($sig.Status -eq 'NotSigned') {
+                $risk = 'Medio'; $reasons += 'proceso sin firma con conexion saliente'
+            }
+        }
+
+        if ($risk) {
+            $dest = if ($c.State -eq 'Listen') { "escucha :$($c.LocalPort)" } else { "$($c.RemoteAddress):$($c.RemotePort)" }
+            $key = "$pname|$dest"
+            if (-not $seen.Add($key)) { continue }
+            $found = $true
+            Add-Finding -Category 'Red' -Risk $risk -Item "$pname  ->  $dest" -Path $path `
+                -Reason ($reasons -join '; ')
+        }
+    }
+
+    Write-Host ("  ({0} conexiones establecidas, {1} en escucha)" -f $estab, $listen) -ForegroundColor DarkGray
+    if (-not $found) { Write-Host "  (Sin conexiones sospechosas)" -ForegroundColor DarkGray }
+}
+
+function Scan-StartupOptimization {
+    Write-Title "PROGRAMAS DE ARRANQUE (OPTIMIZACION)"
+    Write-Host "  Que arranca con Windows. No es seguridad: son sugerencias para acelerar el arranque." -ForegroundColor DarkGray
+    Write-Host ""
+
+    try {
+        $items = Get-CimInstance Win32_StartupCommand -ErrorAction Stop
+    } catch {
+        Write-Host "  (No se pudo leer la lista de programas de arranque)" -ForegroundColor DarkGray
+        return
+    }
+    if (-not $items) {
+        Write-Host "  (Sin programas de arranque registrados)" -ForegroundColor DarkGray
+        return
+    }
+
+    # Esencial: seguridad, drivers, audio/video, fabricante. No conviene tocar.
+    $essentialKw = 'securityhealth|defender|antivirus|mcafee|norton|kaspersky|bitdefender|eset|avast|avg|realtek|rtkaud|nvidia|nvcontainer|intel|igfx|amd|radeon|synaptics|elan|audiodg|sttray|dell|lenovo|hp '
+    # Optimizable: updaters, launchers y apps que no necesitan arrancar con el SO.
+    $optimizableKw = 'update|updater|helper|launcher|steam|spotify|discord|epic|adobe|acrobat|reader|itunes|quicktime|skype|zoom|webex|googleupdate|google update|java|jusched|onedrive|dropbox|google drive|slack|teams|notion|cron|toolbox|origin|ubisoft|battle\.net|riot|overwolf|docker|spotifyweb|whatsapp|telegram|grammarly|ccleaner'
+
+    $optCount = 0
+    foreach ($it in $items) {
+        $name = if ($it.Name) { $it.Name } else { $it.Caption }
+        $cmd  = [string]$it.Command
+        $loc  = [string]$it.Location
+        $hay  = "$name $cmd"
+
+        if ($hay -imatch $essentialKw) {
+            $tag = 'ESENCIAL  '; $color = 'Green'
+        } elseif ($hay -imatch $optimizableKw) {
+            $tag = 'OPTIMIZABLE'; $color = 'Yellow'; $optCount++
+        } else {
+            $tag = 'REVISAR   '; $color = 'Gray'
+        }
+
+        Write-Host ("  [{0}] " -f $tag) -ForegroundColor $color -NoNewline
+        Write-Host $name -ForegroundColor $color
+        if ($loc) { Write-Host "                Origen: $loc" -ForegroundColor DarkGray }
+    }
+
+    Write-Host ""
+    if ($optCount -gt 0) {
+        Write-Host ("  >> {0} programa(s) marcados como OPTIMIZABLES." -f $optCount) -ForegroundColor Yellow
+        Write-Host "     Para desactivarlos y acelerar el arranque:" -ForegroundColor Gray
+        Write-Host "     Administrador de tareas (Ctrl+Shift+Esc) -> pestana 'Inicio' -> clic derecho -> Deshabilitar" -ForegroundColor Gray
+        Write-Host "     (Desactivar el inicio automatico NO desinstala la app; podes abrirla cuando quieras.)" -ForegroundColor DarkGray
+    } else {
+        Write-Host "  >> No se detectaron programas claramente optimizables." -ForegroundColor Green
+    }
+}
+
 function Show-Summary {
     Write-Title "RESUMEN"
     $alto  = @($script:Findings.Where({ $_.Riesgo -eq 'Alto'  })).Count
@@ -699,7 +814,10 @@ Scan-RegistryRun
 Scan-ScheduledTasks
 Scan-Services
 Scan-Processes
+Scan-NetworkConnections
 Scan-RecentExecutables
+
+Scan-StartupOptimization
 
 Show-Summary
 

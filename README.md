@@ -19,7 +19,12 @@ sospechosos y te muestra **dónde están alojados** (ruta exacta) y con qué **n
 | **Tareas programadas** | Tareas con comandos ofuscados, descargas remotas o binarios en carpetas de usuario |
 | **Servicios** | Servicios cuyo binario está en ubicaciones de usuario o sin firmar |
 | **Procesos** | Procesos corriendo desde Temp/AppData o suplantando nombres del sistema |
+| **Conexiones de red** | Procesos sospechosos conectados a internet o escuchando puertos (malware "llamando a casa") |
 | **Archivos recientes** | Ejecutables nuevos en zonas de riesgo, doble extensión, ocultos+sistema, sin firma en zonas de descarga |
+
+Además incluye una sección de **optimización del arranque** (no es seguridad): lista los programas
+que arrancan con Windows y marca cuáles son `OPTIMIZABLE` (updaters, launchers que podés desactivar
+para acelerar el arranque) vs. `ESENCIAL` (seguridad, drivers).
 
 ### Niveles de riesgo
 
