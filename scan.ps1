@@ -792,6 +792,27 @@ function Show-Summary {
         Write-Host "     (Esto NO garantiza que el equipo este limpio: es solo un triaje.)" -ForegroundColor DarkGray
     }
     Write-Host ""
+
+    # Sugerencia: limpieza de temporales (opcional, la decide el usuario).
+    $tmpBytes = 0
+    foreach ($p in @($env:TEMP, (Join-Path $env:windir 'Temp'))) {
+        if (Test-Path $p) {
+            $s = (Get-ChildItem -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue |
+                  Measure-Object -Property Length -Sum).Sum
+            if ($s) { $tmpBytes += [double]$s }
+        }
+    }
+    if ($tmpBytes -ge 1MB) {
+        if     ($tmpBytes -ge 1GB) { $tmpStr = ('{0:N2} GB' -f ($tmpBytes / 1GB)) }
+        else                       { $tmpStr = ('{0:N0} MB' -f ($tmpBytes / 1MB)) }
+        Write-Host ("  Tip: tenes {0} en archivos temporales. Para liberar espacio:" -f $tmpStr) -ForegroundColor Cyan
+        if (Get-Command clean -ErrorAction SilentlyContinue) {
+            Write-Host "       clean        (borra %TEMP% y Windows\Temp; pide confirmacion)" -ForegroundColor White
+        } else {
+            Write-Host '       powershell -ExecutionPolicy Bypass -File .\clean.ps1' -ForegroundColor White
+        }
+        Write-Host ""
+    }
 }
 
 # ---------------------------------------------------------------------------
