@@ -64,6 +64,24 @@ if ($Uninstall) {
 $content = $content.TrimEnd() + "`r`n`r`n" + $block + "`r`n"
 Set-Content -Path $PROFILE -Value $content -Encoding UTF8
 
+# Por defecto Windows trae la politica en 'Restricted', que impide cargar el
+# perfil (y por ende definir el comando 'scan'). La pasamos a RemoteSigned a
+# nivel de usuario (no requiere admin, es reversible). Solo si hace falta.
+$cu = Get-ExecutionPolicy -Scope CurrentUser
+if ($cu -in @('Restricted', 'Undefined', 'AllSigned')) {
+    try {
+        Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force -ErrorAction Stop
+        Write-Host "  [ OK ] Politica de ejecucion (usuario) -> RemoteSigned" -ForegroundColor Green
+    } catch {
+        Write-Host "  [ !! ] No se pudo ajustar la politica de ejecucion automaticamente." -ForegroundColor Yellow
+        Write-Host "         Corre a mano:  Set-ExecutionPolicy -Scope CurrentUser RemoteSigned" -ForegroundColor Yellow
+    }
+}
+
+# Desbloqueamos el perfil por si quedo marcado como 'descargado de internet'
+# (tipico cuando esta dentro de OneDrive).
+Unblock-File -Path $PROFILE -ErrorAction SilentlyContinue
+
 Write-Host ""
 Write-Host "  [ OK ] Comando 'scan' instalado correctamente." -ForegroundColor Green
 Write-Host ""

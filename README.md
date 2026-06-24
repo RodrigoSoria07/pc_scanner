@@ -111,6 +111,19 @@ scan.cmd -Days 7
 
 ---
 
+## 🛠️ Solución de problemas
+
+**`scan` no se reconoce como comando** o el perfil tira *"la ejecución de scripts está deshabilitada"*:
+es la política de ejecución de Windows (viene `Restricted` por defecto). El instalador ya la ajusta,
+pero si lo necesitás a mano (no requiere admin):
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+Después **abrí una terminal nueva** y volvé a probar `scan`. Si tu perfil está dentro de OneDrive y
+sigue sin cargar, desbloquealo: `Unblock-File $PROFILE`.
+
 ## ⚠️ Limitaciones
 
 - Es un **detector heurístico**, no un antivirus: puede tener falsos positivos y **no** detecta todo el malware.
