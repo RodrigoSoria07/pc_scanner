@@ -174,7 +174,7 @@ function Write-Typing {
 
 # Lluvia de caracteres estilo Matrix durante unos segundos, luego limpia.
 function Show-MatrixRain {
-    param([int]$Frames = 50)
+    param([int]$Frames = 40)
     if (-not $script:Animate) { return }
 
     $w = 0; $h = 0
@@ -231,7 +231,7 @@ function Show-MatrixRain {
                 $drops[$x]++
                 if (($drops[$x] - 9) -gt $h) { $drops[$x] = Get-Random -Minimum (-6) -Maximum 0 }
             }
-            Start-Sleep -Milliseconds 25
+            Start-Sleep -Milliseconds 12
         }
     } catch {
         # Si la consola no soporta posicionamiento, abortamos sin romper nada.

@@ -80,8 +80,22 @@ clean -Force    # borra sin preguntar
 
 Los archivos en uso se saltean solos (no se fuerza el cierre de nada).
 
+> 🔒 `clean` **pide permisos de administrador (UAC)** automáticamente, así puede
+> borrar también `C:\Windows\Temp`. Si rechazás el UAC, igual limpia tu `%TEMP%`.
+
 > ℹ️ Limpiar temporales libera **espacio en disco**, no reduce la CPU. Los
 > valores de CPU/RAM se muestran solo como referencia.
+
+### 🔄 Actualizar (comando `update`)
+
+Para traer la última versión publicada en GitHub sin recordar el one-liner:
+
+```powershell
+update
+```
+
+Re-descarga todos los scripts a `%LOCALAPPDATA%\pc_scanner` y vuelve a registrar
+los comandos. Después **abrí una ventana nueva** de PowerShell para tomar los cambios.
 
 Para quitar el comando del perfil:
 
@@ -169,7 +183,7 @@ sigue sin cargar, desbloquealo: `Unblock-File $PROFILE`.
 ## 🤝 Contribuir
 
 Issues y PRs bienvenidos. Ideas a futuro: integración con VirusTotal (hash lookup),
-exportar reporte a HTML/JSON, versión para Linux/macOS en Bash.
+exportar reporte a HTML/JSON, auto-elevación opcional de `scan`, versión para Linux/macOS en Bash.
 
 ## 📄 Licencia
 

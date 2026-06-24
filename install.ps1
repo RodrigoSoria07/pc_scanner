@@ -30,7 +30,8 @@ if (-not (Test-Path $script)) {
     Write-Host "ERROR: no encuentro scan.ps1 junto a este instalador." -ForegroundColor Red
     exit 1
 }
-$cleanScript = Join-Path $PSScriptRoot 'clean.ps1'
+$cleanScript  = Join-Path $PSScriptRoot 'clean.ps1'
+$updateScript = Join-Path $PSScriptRoot 'update.ps1'
 
 # Marcadores para poder actualizar/quitar el bloque sin tocar el resto del perfil.
 $markerStart = '# >>> comando scan (virus-scanner) >>>'
@@ -40,11 +41,16 @@ $cleanFn = ''
 if (Test-Path $cleanScript) {
     $cleanFn = "function clean { powershell -NoProfile -ExecutionPolicy Bypass -File `"$cleanScript`" @args }"
 }
+$updateFn = ''
+if (Test-Path $updateScript) {
+    $updateFn = "function update { powershell -NoProfile -ExecutionPolicy Bypass -File `"$updateScript`" @args }"
+}
 
 $block = @"
 $markerStart
 function scan { powershell -NoProfile -ExecutionPolicy Bypass -File "$script" @args }
 $cleanFn
+$updateFn
 $markerEnd
 "@
 
@@ -98,4 +104,5 @@ Write-Host "  Abri una NUEVA ventana de PowerShell y escribi:" -ForegroundColor 
 Write-Host "      scan" -ForegroundColor White
 Write-Host ""
 Write-Host "  Otros usos:  scan -Days 7   |   scan -Full   |   scan -NoAnim" -ForegroundColor DarkGray
+Write-Host "  Tambien:     clean  (borra temporales)   |   update  (actualiza desde GitHub)" -ForegroundColor DarkGray
 Write-Host ""
