@@ -1,0 +1,16 @@
+# Reportes generados localmente
+*.log
+*.html
+*.json
+reportes/
+output/
+
+# Temporales del sistema
+Thumbs.db
+desktop.ini
+*.tmp
+
+# Editores / IDE
+.vscode/
+.idea/
+*.swp
