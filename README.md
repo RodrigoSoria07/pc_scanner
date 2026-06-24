@@ -19,7 +19,7 @@ sospechosos y te muestra **dónde están alojados** (ruta exacta) y con qué **n
 | **Tareas programadas** | Tareas con comandos ofuscados, descargas remotas o binarios en carpetas de usuario |
 | **Servicios** | Servicios cuyo binario está en ubicaciones de usuario o sin firmar |
 | **Procesos** | Procesos corriendo desde Temp/AppData o suplantando nombres del sistema |
-| **Archivos recientes** | Ejecutables nuevos en zonas calientes, doble extensión, ocultos+sistema, sin firma en zonas de descarga |
+| **Archivos recientes** | Ejecutables nuevos en zonas de riesgo, doble extensión, ocultos+sistema, sin firma en zonas de descarga |
 
 ### Niveles de riesgo
 
@@ -103,7 +103,7 @@ scan.cmd -Days 7
           Ruta : powershell.exe -enc SQBFAFgA...
           Motivo: PowerShell con comando codificado en Base64
 
->> Ejecutables recientes en zonas calientes (ultimos 7 dias)
+>> Ejecutables recientes en zonas de riesgo (ultimos 7 dias)
   [Alto ] factura.pdf.exe
           Ruta : C:\Users\...\Downloads\factura.pdf.exe
           Motivo: DOBLE EXTENSION enganosa; binario sin firma en zona de descarga (NotSigned)

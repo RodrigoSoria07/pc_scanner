@@ -14,7 +14,7 @@
       - Tareas programadas con acciones sospechosas.
       - Servicios cuyo binario esta en ubicaciones de usuario o sin firmar.
       - Procesos en ejecucion corriendo desde carpetas temporales/usuario.
-      - Ejecutables recientes en zonas calientes (Temp, AppData, Downloads...).
+      - Ejecutables recientes en zonas de riesgo (Temp, AppData, Downloads...).
 
 .PARAMETER Days
     Antiguedad (en dias) para considerar un ejecutable como "reciente".
@@ -584,7 +584,7 @@ function Scan-Processes {
 }
 
 function Scan-RecentExecutables {
-    Write-Section "Ejecutables recientes en zonas calientes (ultimos $Days dias)"
+    Write-Section "Ejecutables recientes en zonas de riesgo (ultimos $Days dias)"
     $cutoff = (Get-Date).AddDays(-$Days)
     $seen = New-Object System.Collections.Generic.HashSet[string]
     $hits = 0
