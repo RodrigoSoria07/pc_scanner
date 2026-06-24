@@ -806,10 +806,20 @@ function Show-Summary {
         if     ($tmpBytes -ge 1GB) { $tmpStr = ('{0:N2} GB' -f ($tmpBytes / 1GB)) }
         else                       { $tmpStr = ('{0:N0} MB' -f ($tmpBytes / 1MB)) }
         Write-Host ("  Tip: tenes {0} en archivos temporales. Para liberar espacio:" -f $tmpStr) -ForegroundColor Cyan
-        if (Get-Command clean -ErrorAction SilentlyContinue) {
+        # scan corre con -NoProfile, asi que Get-Command no ve la funcion 'clean'
+        # del perfil. Detectamos leyendo el archivo de perfil directamente.
+        $cleanRegistered = $false
+        if ($PROFILE -and (Test-Path $PROFILE)) {
+            if (Select-String -Path $PROFILE -Pattern 'function\s+clean' -Quiet -ErrorAction SilentlyContinue) {
+                $cleanRegistered = $true
+            }
+        }
+        $cleanScript = Join-Path $PSScriptRoot 'clean.ps1'
+        if ($cleanRegistered) {
             Write-Host "       clean        (borra %TEMP% y Windows\Temp; pide confirmacion)" -ForegroundColor White
-        } else {
-            Write-Host '       powershell -ExecutionPolicy Bypass -File .\clean.ps1' -ForegroundColor White
+        } elseif (Test-Path $cleanScript) {
+            # Sin instalar: damos la ruta absoluta para que funcione desde cualquier carpeta.
+            Write-Host ("       powershell -ExecutionPolicy Bypass -File `"{0}`"" -f $cleanScript) -ForegroundColor White
         }
         Write-Host ""
     }

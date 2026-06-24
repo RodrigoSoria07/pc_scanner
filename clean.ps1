@@ -19,9 +19,30 @@
 #>
 
 [CmdletBinding()]
-param([switch]$Force)
+param([switch]$Force, [switch]$Elevated)
 
 $ErrorActionPreference = 'SilentlyContinue'
+
+# --- Autoelevacion a administrador ----------------------------------------
+# Borrar C:\Windows\Temp y los temporales protegidos requiere permisos de
+# administrador. Si no los tenemos, relanzamos el script pidiendo elevacion
+# (UAC). El switch -Elevated evita un bucle infinito si el usuario rechaza.
+$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if (-not $isAdmin -and -not $Elevated) {
+    Write-Host ""
+    Write-Host "  Pidiendo permisos de administrador (UAC) para una limpieza completa..." -ForegroundColor Cyan
+    $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath, '-Elevated')
+    if ($Force) { $argList += '-Force' }
+    try {
+        Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $argList -ErrorAction Stop
+        # La ventana elevada hace el trabajo; esta instancia termina aca.
+        return
+    } catch {
+        Write-Host "  Elevacion cancelada. Continuo SIN admin (se saltearan el temp del sistema y archivos protegidos)." -ForegroundColor Yellow
+        Write-Host ""
+    }
+}
 
 # --- Helpers --------------------------------------------------------------
 
@@ -145,3 +166,9 @@ if ($skipped -gt 0) {
 Write-Host ""
 Write-Host "  Nota: limpiar temporales libera DISCO, no baja la CPU." -ForegroundColor DarkGray
 Write-Host ""
+
+# La ventana elevada es independiente y se cerraria sola: pausamos para que
+# se pueda leer el resultado.
+if ($Elevated) {
+    Read-Host "  Presiona Enter para cerrar esta ventana de administrador" | Out-Null
+}
