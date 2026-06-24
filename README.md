@@ -35,9 +35,24 @@ para acelerar el arranque) vs. `ESENCIAL` (seguridad, drivers).
 
 ---
 
+## ⚡ Instalación rápida en una PC nueva (un solo comando)
+
+Abrí **PowerShell** y pegá esto. Descarga todo desde GitHub y deja el comando `scan` listo:
+
+```powershell
+irm https://raw.githubusercontent.com/RodrigoSoria07/pc_scanner/main/get.ps1 | iex
+```
+
+Después **abrí una ventana nueva de PowerShell** y ya podés usar `scan` desde cualquier carpeta.
+
+> No requiere admin ni instala paquetes del sistema. Solo copia los scripts a
+> `%LOCALAPPDATA%\pc_scanner` y registra el comando en tu perfil.
+
+---
+
 ## 🚀 Instalación (comando `scan`)
 
-Corré el instalador **una sola vez**. Registra el comando `scan` en tu perfil de PowerShell:
+Si clonaste el repo, corré el instalador **una sola vez**. Registra el comando `scan` en tu perfil de PowerShell:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1
