@@ -41,13 +41,21 @@
 [CmdletBinding()]
 param(
     [int]$Days = 14,
-    [switch]$Full
+    [switch]$Full,
+    [switch]$NoAnim
 )
 
 # ---------------------------------------------------------------------------
 # Estado global
 # ---------------------------------------------------------------------------
 $script:Findings = New-Object System.Collections.Generic.List[object]
+
+# Activamos animaciones solo si hay una consola interactiva (no redirigida a
+# archivo) y el usuario no paso -NoAnim.
+$script:Animate = $false
+try {
+    $script:Animate = (-not $NoAnim) -and (-not [Console]::IsOutputRedirected)
+} catch { $script:Animate = $false }
 
 # Extensiones consideradas "ejecutables" o de script.
 $script:ExecExt = @('.exe', '.dll', '.scr', '.com', '.pif', '.bat', '.cmd',
@@ -117,15 +125,165 @@ function Test-IsExcludedPath {
 function Write-Title {
     param([string]$Text)
     Write-Host ""
-    Write-Host ("=" * 70) -ForegroundColor DarkCyan
-    Write-Host "  $Text" -ForegroundColor Cyan
-    Write-Host ("=" * 70) -ForegroundColor DarkCyan
+    Write-Host ("=" * 70) -ForegroundColor DarkGreen
+    if ($script:Animate) {
+        Write-Typing "  $Text" -Color Green -Delay 5
+    } else {
+        Write-Host "  $Text" -ForegroundColor Green
+    }
+    Write-Host ("=" * 70) -ForegroundColor DarkGreen
 }
 
 function Write-Section {
     param([string]$Text)
     Write-Host ""
-    Write-Host ">> $Text" -ForegroundColor White
+    if ($script:Animate) {
+        Write-Typing ">> $Text" -Color Green -Delay 4
+    } else {
+        Write-Host ">> $Text" -ForegroundColor White
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Animaciones estilo "consola hacker" (cosmeticas, opcionales)
+# ---------------------------------------------------------------------------
+
+# Efecto maquina de escribir: imprime el texto caracter por caracter.
+function Write-Typing {
+    param(
+        [string]$Text,
+        [System.ConsoleColor]$Color = [System.ConsoleColor]::Green,
+        [int]$Delay = 10,
+        [switch]$NoNewline
+    )
+    if (-not $script:Animate) {
+        Write-Host $Text -ForegroundColor $Color -NoNewline:$NoNewline
+        return
+    }
+    foreach ($ch in $Text.ToCharArray()) {
+        Write-Host $ch -ForegroundColor $Color -NoNewline
+        if ($Delay -gt 0) { Start-Sleep -Milliseconds $Delay }
+    }
+    if (-not $NoNewline) { Write-Host "" }
+}
+
+# Lluvia de caracteres estilo Matrix durante unos segundos, luego limpia.
+function Show-MatrixRain {
+    param([int]$Frames = 50)
+    if (-not $script:Animate) { return }
+
+    $w = 0; $h = 0
+    try { $w = [Console]::WindowWidth; $h = [Console]::WindowHeight } catch { return }
+    if ($w -lt 10 -or $h -lt 6) { return }
+    $w = [Math]::Min($w, 220) - 1   # evitamos la ultima columna (provoca scroll)
+
+    $chars = ([char[]](48..57 + 65..90)) + '@#$%&*<>/\|=+-'.ToCharArray()
+    $green = [System.ConsoleColor]::Green
+    $head  = [System.ConsoleColor]::White
+    $dim   = [System.ConsoleColor]::DarkGreen
+
+    # Posicion inicial (aleatoria) de cada "gota" por columna.
+    $drops = New-Object 'int[]' $w
+    for ($i = 0; $i -lt $w; $i++) { $drops[$i] = Get-Random -Minimum (-$h) -Maximum $h }
+
+    $prevVisible = $true
+    try {
+        try { $prevVisible = [Console]::CursorVisible } catch {}
+        [Console]::CursorVisible = $false
+        [Console]::Clear()
+
+        for ($f = 0; $f -lt $Frames; $f++) {
+            for ($x = 0; $x -lt $w; $x++) {
+                $y = $drops[$x]
+
+                # Cabeza brillante.
+                if ($y -ge 0 -and $y -lt $h) {
+                    [Console]::SetCursorPosition($x, $y)
+                    [Console]::ForegroundColor = $head
+                    [Console]::Write($chars[(Get-Random -Maximum $chars.Length)])
+                }
+                # Cuerpo verde, una fila arriba.
+                $by = $y - 1
+                if ($by -ge 0 -and $by -lt $h) {
+                    [Console]::SetCursorPosition($x, $by)
+                    [Console]::ForegroundColor = $green
+                    [Console]::Write($chars[(Get-Random -Maximum $chars.Length)])
+                }
+                # Estela tenue.
+                $dy = $y - 4
+                if ($dy -ge 0 -and $dy -lt $h) {
+                    [Console]::SetCursorPosition($x, $dy)
+                    [Console]::ForegroundColor = $dim
+                    [Console]::Write($chars[(Get-Random -Maximum $chars.Length)])
+                }
+                # Borrado de la cola.
+                $ey = $y - 9
+                if ($ey -ge 0 -and $ey -lt $h) {
+                    [Console]::SetCursorPosition($x, $ey)
+                    [Console]::Write(' ')
+                }
+
+                $drops[$x]++
+                if (($drops[$x] - 9) -gt $h) { $drops[$x] = Get-Random -Minimum (-6) -Maximum 0 }
+            }
+            Start-Sleep -Milliseconds 25
+        }
+    } catch {
+        # Si la consola no soporta posicionamiento, abortamos sin romper nada.
+    } finally {
+        try {
+            [Console]::ResetColor()
+            [Console]::Clear()
+            [Console]::SetCursorPosition(0, 0)
+            [Console]::CursorVisible = $prevVisible
+        } catch {}
+    }
+}
+
+# Banner ASCII del scanner.
+function Show-Banner {
+    $banner = @(
+        '  __     ___                 ____                                ',
+        '  \ \   / (_)_ __ _   _ ___  / ___|  ___ __ _ _ __  _ __   ___ _ __ ',
+        "   \ \ / /| | '__| | | / __| \___ \ / __/ _`` | '_ \| '_ \ / _ \ '__|",
+        '    \ V / | | |  | |_| \__ \  ___) | (_| (_| | | | | | | |  __/ |   ',
+        '     \_/  |_|_|   \__,_|___/ |____/ \___\__,_|_| |_|_| |_|\___|_|   '
+    )
+    Write-Host ""
+    foreach ($line in $banner) {
+        Write-Host $line -ForegroundColor Green
+        if ($script:Animate) { Start-Sleep -Milliseconds 45 }
+    }
+    Write-Typing "        [ heuristic malware triage // read-only ]" -Color DarkGreen -Delay 6
+    Write-Host ""
+}
+
+# Secuencia de arranque tipo terminal: lineas "[ OK ]" con efecto tipeo.
+function Write-BootSequence {
+    $steps = @(
+        'Inicializando motor de escaneo',
+        'Cargando reglas heuristicas',
+        'Mapeando puntos de persistencia',
+        'Conectando con el subsistema del kernel',
+        'Estableciendo enlace seguro'
+    )
+    foreach ($s in $steps) {
+        Write-Host "  [" -ForegroundColor DarkGreen -NoNewline
+        Write-Host "*" -ForegroundColor Green -NoNewline
+        Write-Host "] " -ForegroundColor DarkGreen -NoNewline
+        Write-Typing $s -Color Green -Delay 6 -NoNewline
+        if ($script:Animate) {
+            # Puntos suspensivos animados.
+            for ($i = 0; $i -lt 3; $i++) {
+                Write-Host "." -ForegroundColor Green -NoNewline
+                Start-Sleep -Milliseconds 90
+            }
+        } else {
+            Write-Host "..." -ForegroundColor Green -NoNewline
+        }
+        Write-Host "  [ OK ]" -ForegroundColor Green
+    }
+    Write-Host ""
 }
 
 function Add-Finding {
@@ -223,11 +381,11 @@ function Show-SystemInfo {
         $os  = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
         $cs  = Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
         $up  = (Get-Date) - $os.LastBootUpTime
-        Write-Host ("  Equipo     : {0}" -f $cs.Name)
-        Write-Host ("  Usuario    : {0}" -f $env:USERNAME)
-        Write-Host ("  SO         : {0} ({1})" -f $os.Caption, $os.Version)
-        Write-Host ("  Arquitectura: {0}" -f $os.OSArchitecture)
-        Write-Host ("  Uptime     : {0}d {1}h {2}m" -f $up.Days, $up.Hours, $up.Minutes)
+        Write-Typing ("  Equipo      : {0}" -f $cs.Name)              -Color Green -Delay 6
+        Write-Typing ("  Usuario     : {0}" -f $env:USERNAME)        -Color Green -Delay 6
+        Write-Typing ("  SO          : {0} ({1})" -f $os.Caption, $os.Version) -Color Green -Delay 6
+        Write-Typing ("  Arquitectura: {0}" -f $os.OSArchitecture)   -Color Green -Delay 6
+        Write-Typing ("  Uptime      : {0}d {1}h {2}m" -f $up.Days, $up.Hours, $up.Minutes) -Color Green -Delay 6
     } catch {
         Write-Host "  (No se pudo obtener informacion del sistema)" -ForegroundColor DarkGray
     }
@@ -525,8 +683,13 @@ function Show-Summary {
 # Ejecucion
 # ---------------------------------------------------------------------------
 $ErrorActionPreference = 'Continue'
-Write-Title "SCANNER HEURISTICO DE MALWARE  -  $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
+
+Show-MatrixRain
+Show-Banner
+Write-Host ("  SCANNER HEURISTICO DE MALWARE  -  {0}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm')) -ForegroundColor DarkGreen
 Write-Host "  Herramienta defensiva de SOLO LECTURA. No elimina ni modifica nada." -ForegroundColor DarkGray
+Write-Host ""
+Write-BootSequence
 
 Show-SystemInfo
 

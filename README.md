@@ -41,7 +41,15 @@ sospechosos y te muestra **dónde están alojados** (ruta exacta) y con qué **n
 
 # Escaneo profundo: recorre todo el perfil de usuario (más lento)
 .\scan.ps1 -Days 30 -Full
+
+# Sin animaciones (intro Matrix, efecto tipeo, etc.)
+.\scan.ps1 -NoAnim
 ```
+
+> 🟢 **Modo "consola hacker":** al arrancar muestra una lluvia estilo Matrix, un banner
+> ASCII y una secuencia de arranque animada, y los datos del sistema aparecen con efecto
+> máquina de escribir. Las animaciones se **desactivan solas** si mandás la salida a un
+> archivo, o podés apagarlas con `-NoAnim`.
 
 Si Windows bloquea la ejecución de scripts, corré con bypass puntual (no cambia tu política global):
 
@@ -58,6 +66,7 @@ powershell -ExecutionPolicy Bypass -File .\scan.ps1
 | --- | --- | --- |
 | `-Days <n>` | Antigüedad en días para considerar un ejecutable "reciente" | `14` |
 | `-Full` | Escaneo profundo de todo el perfil de usuario | (apagado) |
+| `-NoAnim` | Desactiva las animaciones (intro Matrix, efecto tipeo) | (apagado) |
 
 ### Códigos de salida
 
