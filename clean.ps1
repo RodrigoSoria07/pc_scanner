@@ -62,9 +62,12 @@ $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIde
 if (-not $isAdmin -and -not $Elevated -and -not $DryRun) {
     Write-Host ""
     Write-Host "  Pidiendo permisos de administrador (UAC) para una limpieza completa..." -ForegroundColor Cyan
-    $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath, '-Elevated')
+    # Las rutas van entre comillas: el perfil del usuario puede tener espacios
+    # (ej. "Rodrigo Soria"), y Start-Process une los argumentos por espacios.
+    # Sin comillas, la ventana elevada recibe la ruta cortada y se cierra al instante.
+    $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-Elevated')
     if ($Force)  { $argList += '-Force' }
-    if ($LogPath) { $argList += @('-LogPath', $LogPath) }
+    if ($LogPath) { $argList += @('-LogPath', "`"$LogPath`"") }
     try {
         Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $argList -ErrorAction Stop
         # La ventana elevada hace el trabajo; esta instancia termina aca.
