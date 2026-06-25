@@ -47,7 +47,19 @@
 param(
     [int]$Days = 14,
     [switch]$Full,
-    [switch]$NoAnim
+    [switch]$NoAnim,
+
+    # --- VirusTotal (opcional) ---
+    [switch]$VirusTotal,            # consulta el hash de los binarios sospechosos en VirusTotal
+    [string]$VTApiKey,             # API key (si se omite usa $env:VT_API_KEY)
+    [int]$VTMax = 20,             # tope de consultas VT (free tier: 4/min, 500/dia)
+
+    # --- Reportes (opcional) ---
+    [switch]$Report,               # genera reporte HTML + JSON
+    [switch]$Json,                # genera solo JSON
+    [switch]$Pdf,                 # ademas genera PDF (requiere Microsoft Edge)
+    [string]$OutDir,             # carpeta de salida (default Documents\pc_scanner)
+    [switch]$OpenReport            # abre el HTML al terminar
 )
 
 # ---------------------------------------------------------------------------
@@ -298,14 +310,18 @@ function Add-Finding {
         [string]$Risk,
         [string]$Item,
         [string]$Path,
-        [string]$Reason
+        [string]$Reason,
+        [string]$FileForHash   # ruta limpia del binario (cuando Ruta lleva argumentos)
     )
     $script:Findings.Add([PSCustomObject]@{
-        Categoria = $Category
-        Riesgo    = $Risk
-        Item      = $Item
-        Ruta      = $Path
-        Motivo    = $Reason
+        Categoria   = $Category
+        Riesgo      = $Risk
+        Item        = $Item
+        Ruta        = $Path
+        Motivo      = $Reason
+        FileForHash = $FileForHash
+        Hash        = $null
+        VT          = $null
     })
 
     $color = switch ($Risk) {
@@ -521,7 +537,8 @@ function Scan-ScheduledTasks {
                 $found = $true
                 $full = ("{0}\{1}" -f $t.TaskPath.TrimEnd('\'), $t.TaskName)
                 Add-Finding -Category 'Tarea programada' -Risk $risk -Item $full `
-                    -Path ("{0} {1}" -f $exe, $argStr).Trim() -Reason ($reasons -join '; ')
+                    -Path ("{0} {1}" -f $exe, $argStr).Trim() -Reason ($reasons -join '; ') `
+                    -FileForHash $exeExpanded
             }
         }
     }
@@ -554,7 +571,7 @@ function Scan-Services {
         if ($risk) {
             $found = $true
             Add-Finding -Category 'Servicio' -Risk $risk -Item "$($s.Name) ($($s.State))" `
-                -Path $s.PathName -Reason ($reasons -join '; ')
+                -Path $s.PathName -Reason ($reasons -join '; ') -FileForHash $exe
         }
     }
     if (-not $found) { Write-Host "  (Sin servicios sospechosos)" -ForegroundColor DarkGray }
@@ -826,6 +843,360 @@ function Show-Summary {
 }
 
 # ---------------------------------------------------------------------------
+# VirusTotal (opcional): reputacion real de los binarios sospechosos
+# ---------------------------------------------------------------------------
+
+# Cache en memoria: hash -> resultado VT (evita reconsultar el mismo binario).
+$script:VTCache = @{}
+
+# Devuelve una ruta de archivo existente y hasheable a partir de un hallazgo.
+function Resolve-HashableFile {
+    param($Finding)
+    $cand = $Finding.FileForHash
+    if ($cand -and (Test-Path -LiteralPath $cand -PathType Leaf)) { return $cand }
+    if ($Finding.Ruta -and (Test-Path -LiteralPath $Finding.Ruta -PathType Leaf)) { return $Finding.Ruta }
+    return $null
+}
+
+function Get-FileSha256 {
+    param([string]$Path)
+    try {
+        if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+        return (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash.ToLower()
+    } catch { return $null }
+}
+
+function Get-VTApiKey {
+    param([string]$Explicit)
+    if ($Explicit)               { return $Explicit }
+    if ($env:VT_API_KEY)         { return $env:VT_API_KEY }
+    if ($env:VIRUSTOTAL_API_KEY) { return $env:VIRUSTOTAL_API_KEY }
+    return $null
+}
+
+# Consulta el reporte de un hash en VirusTotal v3. NO sube el archivo (privacidad):
+# solo consulta por hash. Si VT no lo conoce, devuelve Error='desconocido'.
+function Get-VTFileReport {
+    param([string]$Sha256, [string]$ApiKey)
+    if ($script:VTCache.ContainsKey($Sha256)) { return $script:VTCache[$Sha256] }
+
+    $result = [PSCustomObject]@{
+        Found     = $false
+        Malicious = 0
+        Suspicious= 0
+        Total     = 0
+        Permalink = "https://www.virustotal.com/gui/file/$Sha256"
+        Error     = $null
+    }
+    try {
+        $resp = Invoke-RestMethod -Method Get -Uri "https://www.virustotal.com/api/v3/files/$Sha256" `
+            -Headers @{ 'x-apikey' = $ApiKey } -TimeoutSec 30 -ErrorAction Stop
+        $stats = $resp.data.attributes.last_analysis_stats
+        $result.Found      = $true
+        $result.Malicious  = [int]$stats.malicious
+        $result.Suspicious = [int]$stats.suspicious
+        $result.Total      = [int]$stats.malicious + [int]$stats.suspicious + `
+                             [int]$stats.undetected + [int]$stats.harmless + [int]$stats.timeout
+    } catch {
+        $code = $null
+        try { $code = [int]$_.Exception.Response.StatusCode } catch {}
+        switch ($code) {
+            404     { $result.Error = 'desconocido' }
+            429     { $result.Error = 'rate-limit' }
+            401     { $result.Error = 'api-key-invalida' }
+            default { $result.Error = $_.Exception.Message }
+        }
+    }
+    $script:VTCache[$Sha256] = $result
+    return $result
+}
+
+# Recorre los hallazgos con archivo real (priorizando Alto/Medio), consulta VT
+# y enriquece cada hallazgo. Confirma a 'Alto' los que VT marca como maliciosos.
+function Invoke-VTEnrichment {
+    param([string]$ApiKey, [int]$Max)
+    Write-Section "VirusTotal: reputacion de binarios sospechosos"
+    if (-not $ApiKey) {
+        Write-Host "  (Sin API key. Define `$env:VT_API_KEY o pasa -VTApiKey." -ForegroundColor DarkGray
+        Write-Host "   Conseguila gratis en https://www.virustotal.com/gui/join-us)" -ForegroundColor DarkGray
+        return
+    }
+
+    $order = @{ 'Alto' = 0; 'Medio' = 1; 'Bajo' = 2; 'Info' = 3 }
+    $cands = @($script:Findings | Where-Object { Resolve-HashableFile $_ } |
+        Sort-Object @{ Expression = { $order[$_.Riesgo] } })
+
+    if ($cands.Count -eq 0) {
+        Write-Host "  (No hay archivos analizables entre los hallazgos)" -ForegroundColor DarkGray
+        return
+    }
+
+    $queried = 0
+    $needDelay = $false
+    foreach ($f in $cands) {
+        if ($queried -ge $Max) {
+            Write-Host ("  (... tope de {0} consultas alcanzado; usa -VTMax para subirlo)" -f $Max) -ForegroundColor DarkGray
+            break
+        }
+        $file = Resolve-HashableFile $f
+        $hash = Get-FileSha256 $file
+        if (-not $hash) { continue }
+        $f.Hash = $hash
+
+        # Respetamos el limite del free tier (4/min) salvo que ya este en cache.
+        if (-not $script:VTCache.ContainsKey($hash)) {
+            if ($needDelay) { Start-Sleep -Seconds 15 }
+            $needDelay = $true
+            $queried++
+        }
+        $vt = Get-VTFileReport -Sha256 $hash -ApiKey $ApiKey
+        $f.VT = $vt
+
+        if ($vt.Found -and $vt.Malicious -gt 0) {
+            Write-Host ("  [VT] {0}/{1} motores: MALICIOSO  ->  {2}" -f $vt.Malicious, $vt.Total, $f.Item) -ForegroundColor Red
+            Write-Host ("        {0}" -f $vt.Permalink) -ForegroundColor DarkGray
+            if ($f.Riesgo -ne 'Alto') { $f.Riesgo = 'Alto' }   # confirmado por VT
+            $f.Motivo = ("{0}; VirusTotal: {1}/{2} detecciones" -f $f.Motivo, $vt.Malicious, $vt.Total)
+        } elseif ($vt.Found) {
+            Write-Host ("  [VT] 0/{0}: limpio en VirusTotal  ->  {1}" -f $vt.Total, $f.Item) -ForegroundColor Green
+        } elseif ($vt.Error -eq 'desconocido') {
+            Write-Host ("  [VT] sin datos (nunca analizado)  ->  {0}" -f $f.Item) -ForegroundColor DarkGray
+        } elseif ($vt.Error -eq 'rate-limit') {
+            Write-Host "  [VT] limite de consultas alcanzado; intenta mas tarde." -ForegroundColor Yellow
+            break
+        } elseif ($vt.Error -eq 'api-key-invalida') {
+            Write-Host "  [VT] API key invalida. Revisa -VTApiKey / `$env:VT_API_KEY." -ForegroundColor Red
+            break
+        } else {
+            Write-Host ("  [VT] error consultando: {0}" -f $vt.Error) -ForegroundColor DarkGray
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Reportes: JSON estructurado + HTML autocontenido (+ PDF opcional)
+# ---------------------------------------------------------------------------
+
+function ConvertTo-HtmlSafe {
+    param([string]$Text)
+    if ($null -eq $Text) { return '' }
+    return $Text.Replace('&', '&amp;').Replace('<', '&lt;').Replace('>', '&gt;').Replace('"', '&quot;')
+}
+
+# Construye el modelo de datos del reporte (sirve para JSON y HTML).
+function Get-ReportModel {
+    $alto  = @($script:Findings.Where({ $_.Riesgo -eq 'Alto'  })).Count
+    $medio = @($script:Findings.Where({ $_.Riesgo -eq 'Medio' })).Count
+    $bajo  = @($script:Findings.Where({ $_.Riesgo -eq 'Bajo'  })).Count
+    $info  = @($script:Findings.Where({ $_.Riesgo -eq 'Info'  })).Count
+
+    $osCaption = ''
+    try { $osCaption = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).Caption } catch {}
+
+    [PSCustomObject]@{
+        generatedAt = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+        tool        = 'pc_scanner'
+        host        = $env:COMPUTERNAME
+        user        = $env:USERNAME
+        os          = $osCaption
+        scanDays    = $Days
+        fullScan    = [bool]$Full
+        virusTotal  = [bool]$VirusTotal
+        summary     = [PSCustomObject]@{ alto = $alto; medio = $medio; bajo = $bajo; info = $info; total = $script:Findings.Count }
+        findings    = @($script:Findings | ForEach-Object {
+            [PSCustomObject]@{
+                categoria = $_.Categoria
+                riesgo    = $_.Riesgo
+                item      = $_.Item
+                ruta      = $_.Ruta
+                motivo    = $_.Motivo
+                hash      = $_.Hash
+                virustotal= if ($_.VT) {
+                    [PSCustomObject]@{
+                        encontrado = $_.VT.Found
+                        maliciosos = $_.VT.Malicious
+                        total      = $_.VT.Total
+                        link       = $_.VT.Permalink
+                    }
+                } else { $null }
+            }
+        })
+    }
+}
+
+function Export-JsonReport {
+    param([string]$Path)
+    (Get-ReportModel) | ConvertTo-Json -Depth 6 | Out-File -FilePath $Path -Encoding UTF8
+}
+
+function Export-HtmlReport {
+    param([string]$Path)
+    $m = Get-ReportModel
+
+    $rows = foreach ($f in $m.findings) {
+        $rk = $f.riesgo.ToLower()
+        $vtCell = '<span class="muted">-</span>'
+        if ($f.virustotal) {
+            if ($f.virustotal.encontrado -and $f.virustotal.maliciosos -gt 0) {
+                $vtCell = ('<a class="vt-bad" href="{0}" target="_blank">{1}/{2} MALICIOSO</a>' -f `
+                    (ConvertTo-HtmlSafe $f.virustotal.link), $f.virustotal.maliciosos, $f.virustotal.total)
+            } elseif ($f.virustotal.encontrado) {
+                $vtCell = ('<a class="vt-ok" href="{0}" target="_blank">0/{1} limpio</a>' -f `
+                    (ConvertTo-HtmlSafe $f.virustotal.link), $f.virustotal.total)
+            } else {
+                $vtCell = '<span class="muted">sin datos</span>'
+            }
+        }
+        @"
+<tr class="risk-$rk">
+  <td><span class="badge badge-$rk">$(ConvertTo-HtmlSafe $f.riesgo)</span></td>
+  <td>$(ConvertTo-HtmlSafe $f.categoria)</td>
+  <td class="item">$(ConvertTo-HtmlSafe $f.item)</td>
+  <td class="path">$(ConvertTo-HtmlSafe $f.ruta)</td>
+  <td class="reason">$(ConvertTo-HtmlSafe $f.motivo)</td>
+  <td class="vt">$vtCell</td>
+</tr>
+"@
+    }
+
+    $html = @"
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pc_scanner - Reporte $(ConvertTo-HtmlSafe $m.host)</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:#0a0f0a; color:#cfe8cf; font:14px/1.5 'Segoe UI',system-ui,sans-serif; }
+  .wrap { max-width:1100px; margin:0 auto; padding:24px; }
+  h1 { color:#5fe85f; font-family:Consolas,monospace; letter-spacing:1px; margin:0 0 4px; }
+  .sub { color:#6f9f6f; margin-bottom:24px; }
+  .meta { display:flex; flex-wrap:wrap; gap:8px 24px; background:#0f1a0f; border:1px solid #1d3a1d; border-radius:8px; padding:16px; margin-bottom:20px; }
+  .meta div { min-width:160px; }
+  .meta b { color:#9fd49f; display:block; font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
+  .cards { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:24px; }
+  .card { flex:1; min-width:120px; border-radius:8px; padding:14px 16px; border:1px solid; }
+  .card .n { font-size:28px; font-weight:700; }
+  .card.alto  { background:#2a0d0d; border-color:#5a1d1d; color:#ff8a8a; }
+  .card.medio { background:#2a230d; border-color:#5a4d1d; color:#ffd86a; }
+  .card.bajo  { background:#26220d; border-color:#4d451d; color:#e0c97a; }
+  .card.info  { background:#12210f; border-color:#264a26; color:#9fd49f; }
+  .tablewrap { overflow-x:auto; border:1px solid #1d3a1d; border-radius:8px; }
+  table { border-collapse:collapse; width:100%; min-width:760px; }
+  th,td { text-align:left; padding:10px 12px; border-bottom:1px solid #162916; vertical-align:top; }
+  th { background:#0f1a0f; color:#9fd49f; font-size:11px; text-transform:uppercase; letter-spacing:.5px; position:sticky; top:0; }
+  tr.risk-alto { background:rgba(90,29,29,.18); }
+  .badge { padding:2px 8px; border-radius:10px; font-size:11px; font-weight:700; }
+  .badge-alto  { background:#5a1d1d; color:#ffb3b3; }
+  .badge-medio { background:#5a4d1d; color:#ffe39a; }
+  .badge-bajo  { background:#4d451d; color:#e8d79a; }
+  .badge-info  { background:#264a26; color:#bfe8bf; }
+  .path,.item { font-family:Consolas,monospace; font-size:12px; word-break:break-all; }
+  .reason { color:#9fb89f; font-size:12px; }
+  .muted { color:#5f7f5f; }
+  .vt-bad { color:#ff8a8a; font-weight:700; text-decoration:none; }
+  .vt-ok  { color:#7fe87f; text-decoration:none; }
+  footer { margin-top:24px; color:#5f7f5f; font-size:12px; }
+  a { color:#7fbfff; }
+</style></head><body><div class="wrap">
+  <h1>// pc_scanner</h1>
+  <div class="sub">Triaje heuristico de malware &mdash; reporte generado el $(ConvertTo-HtmlSafe $m.generatedAt)</div>
+  <div class="meta">
+    <div><b>Equipo</b>$(ConvertTo-HtmlSafe $m.host)</div>
+    <div><b>Usuario</b>$(ConvertTo-HtmlSafe $m.user)</div>
+    <div><b>Sistema</b>$(ConvertTo-HtmlSafe $m.os)</div>
+    <div><b>Ventana</b>ultimos $($m.scanDays) dias$(if($m.fullScan){' (profundo)'})</div>
+    <div><b>VirusTotal</b>$(if($m.virusTotal){'activado'}else{'no'})</div>
+  </div>
+  <div class="cards">
+    <div class="card alto"><div class="n">$($m.summary.alto)</div>Riesgo ALTO</div>
+    <div class="card medio"><div class="n">$($m.summary.medio)</div>Riesgo MEDIO</div>
+    <div class="card bajo"><div class="n">$($m.summary.bajo)</div>Riesgo BAJO</div>
+    <div class="card info"><div class="n">$($m.summary.info)</div>Informativos</div>
+  </div>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Riesgo</th><th>Categoria</th><th>Item</th><th>Ruta</th><th>Motivo</th><th>VirusTotal</th></tr></thead>
+    <tbody>
+$($rows -join "`n")
+    </tbody>
+  </table></div>
+  <footer>
+    pc_scanner es una herramienta de triaje heuristico de SOLO LECTURA, no un antivirus.
+    Un resultado limpio no garantiza que el equipo este libre de amenazas.
+    Verifica siempre las rutas marcadas antes de eliminar nada.
+  </footer>
+</div></body></html>
+"@
+    $html | Out-File -FilePath $Path -Encoding UTF8
+}
+
+# Mejor esfuerzo: convierte el HTML a PDF usando Microsoft Edge headless.
+function Export-Pdf {
+    param([string]$HtmlPath, [string]$PdfPath)
+    $edge = $null
+    foreach ($c in @(
+        "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",
+        "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe")) {
+        if (Test-Path $c) { $edge = $c; break }
+    }
+    if (-not $edge) {
+        $cmd = Get-Command msedge.exe -ErrorAction SilentlyContinue
+        if ($cmd) { $edge = $cmd.Source }
+    }
+    if (-not $edge) {
+        Write-Host "  (PDF omitido: no se encontro Microsoft Edge)" -ForegroundColor DarkGray
+        return $false
+    }
+    try {
+        $uri = ([System.Uri]$HtmlPath).AbsoluteUri
+        & $edge --headless --disable-gpu "--print-to-pdf=$PdfPath" --no-pdf-header-footer $uri 2>$null
+        Start-Sleep -Milliseconds 800
+        return (Test-Path $PdfPath)
+    } catch {
+        Write-Host ("  (PDF omitido: {0})" -f $_.Exception.Message) -ForegroundColor DarkGray
+        return $false
+    }
+}
+
+# Orquesta la generacion de todos los reportes solicitados.
+function Export-Reports {
+    param([switch]$Html, [switch]$JsonOut, [switch]$MakePdf, [string]$Dir, [switch]$Open)
+    Write-Title "REPORTES"
+
+    if (-not $Dir) { $Dir = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'pc_scanner' }
+    try {
+        if (-not (Test-Path $Dir)) { New-Item -ItemType Directory -Path $Dir -Force | Out-Null }
+    } catch {
+        Write-Host ("  No se pudo crear la carpeta de reportes: {0}" -f $_.Exception.Message) -ForegroundColor Yellow
+        return
+    }
+
+    $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+    $base  = Join-Path $Dir ("scan_{0}" -f $stamp)
+    $htmlPath = "$base.html"
+
+    if ($JsonOut) {
+        try { Export-JsonReport -Path "$base.json"; Write-Host ("  JSON : {0}.json" -f $base) -ForegroundColor Green }
+        catch { Write-Host ("  Error generando JSON: {0}" -f $_.Exception.Message) -ForegroundColor Yellow }
+    }
+    if ($Html) {
+        try { Export-HtmlReport -Path $htmlPath; Write-Host ("  HTML : {0}" -f $htmlPath) -ForegroundColor Green }
+        catch { Write-Host ("  Error generando HTML: {0}" -f $_.Exception.Message) -ForegroundColor Yellow }
+    }
+    if ($MakePdf) {
+        if (-not (Test-Path $htmlPath)) {
+            try { Export-HtmlReport -Path $htmlPath } catch {}   # PDF necesita el HTML
+        }
+        if (Export-Pdf -HtmlPath $htmlPath -PdfPath "$base.pdf") {
+            Write-Host ("  PDF  : {0}.pdf" -f $base) -ForegroundColor Green
+        }
+    }
+    if ($Open -and (Test-Path $htmlPath)) {
+        try { Start-Process $htmlPath } catch {}
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Ejecucion
 # ---------------------------------------------------------------------------
 $ErrorActionPreference = 'Continue'
@@ -848,9 +1219,18 @@ Scan-Processes
 Scan-NetworkConnections
 Scan-RecentExecutables
 
+if ($VirusTotal) {
+    Invoke-VTEnrichment -ApiKey (Get-VTApiKey $VTApiKey) -Max $VTMax
+}
+
 Scan-StartupOptimization
 
 Show-Summary
+
+if ($Report -or $Json -or $Pdf) {
+    Export-Reports -Html:($Report -or $Pdf) -JsonOut:($Report -or $Json) -MakePdf:$Pdf `
+        -Dir $OutDir -Open:$OpenReport
+}
 
 # Codigo de salida: 2 si hay riesgo alto, 1 si medio, 0 si limpio.
 if (@($script:Findings.Where({ $_.Riesgo -eq 'Alto'  })).Count -gt 0)      { exit 2 }

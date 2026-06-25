@@ -65,7 +65,44 @@ scan                # escaneo estándar
 scan -Days 7        # acota archivos recientes a 7 días
 scan -Full          # escaneo profundo de todo el perfil (más lento)
 scan -NoAnim        # sin animaciones
+scan -Report        # genera reporte HTML + JSON
+scan -VirusTotal    # consulta el hash de lo sospechoso en VirusTotal
 ```
+
+### 🌐 Reputación con VirusTotal (`-VirusTotal`)
+
+Con `-VirusTotal`, el scanner calcula el **SHA-256** de cada binario sospechoso y consulta
+su reputación en [VirusTotal](https://www.virustotal.com) (cuántos motores antivirus lo
+marcan como malicioso). Pasa de *"esto es raro"* a *"12/70 motores lo detectan como malware"*.
+Si VirusTotal lo confirma malicioso, el hallazgo se **eleva automáticamente a riesgo Alto**.
+
+> 🔒 Solo consulta por hash, **no sube tus archivos** (privacidad). Necesitás una API key
+> gratuita: registrate en https://www.virustotal.com/gui/join-us y guardala así:
+>
+> ```powershell
+> setx VT_API_KEY "tu_api_key_aqui"     # una sola vez; abrí una terminal nueva después
+> scan -VirusTotal
+> # o sin guardarla:  scan -VirusTotal -VTApiKey "tu_api_key"
+> ```
+>
+> El plan gratuito permite 4 consultas/minuto, así que el scanner las **espacia solo**.
+> Con `-VTMax <n>` cambiás el tope de consultas por escaneo (default 20).
+
+### 📄 Reportes HTML / JSON / PDF (`-Report`)
+
+```powershell
+scan -Report                 # HTML + JSON en Documentos\pc_scanner
+scan -Json                   # solo JSON (ideal para integraciones)
+scan -Report -Pdf            # además genera PDF (usa Microsoft Edge)
+scan -Report -OpenReport     # abre el HTML al terminar
+scan -Report -OutDir "D:\informes"   # carpeta de salida personalizada
+scan -VirusTotal -Report     # combina ambos: reporte con columna de VirusTotal
+```
+
+Genera un **reporte HTML autocontenido** (tabla de hallazgos con colores por riesgo,
+resumen y enlaces a VirusTotal) y un **JSON estructurado** para integrarlo en otros
+sistemas. El PDF se genera a partir del HTML usando Microsoft Edge en modo headless.
+Por defecto se guardan en `Documentos\pc_scanner\scan_<fecha>.{html,json,pdf}`.
 
 ### 🧹 Limpiar temporales (comando `clean`)
 
@@ -76,9 +113,18 @@ de usuario (`%TEMP%`) y del sistema (`C:\Windows\Temp`) y te muestra el
 ```powershell
 clean           # pide confirmación antes de borrar
 clean -Force    # borra sin preguntar
+clean -DryRun   # SIMULACIÓN: muestra qué borraría, sin borrar nada
 ```
 
 Los archivos en uso se saltean solos (no se fuerza el cierre de nada).
+
+> 🧪 **Modo simulación (`-DryRun`):** lista exactamente qué se borraría y cuánto espacio
+> liberaría, **sin tocar nada** (y sin pedir UAC). Ideal para revisar antes de ejecutar
+> de verdad, sobre todo si limpiás la PC de otra persona.
+>
+> 📋 **Log de auditoría:** cada ejecución (real o simulada) registra qué se borró, qué se
+> saltó y cuánto se liberó en `%LOCALAPPDATA%\pc_scanner\logs\clean_<fecha>.log`. Cambialo
+> con `-LogPath <ruta>`.
 
 > 🔒 `clean` **pide permisos de administrador (UAC)** automáticamente, así puede
 > borrar también `C:\Windows\Temp`. Si rechazás el UAC, igual limpia tu `%TEMP%`.
@@ -132,6 +178,14 @@ scan.cmd -Days 7
 | `-Days <n>` | Antigüedad en días para considerar un ejecutable "reciente" | `14` |
 | `-Full` | Escaneo profundo de todo el perfil de usuario | (apagado) |
 | `-NoAnim` | Desactiva las animaciones (intro Matrix, efecto tipeo) | (apagado) |
+| `-VirusTotal` | Consulta el hash de los binarios sospechosos en VirusTotal | (apagado) |
+| `-VTApiKey <key>` | API key de VirusTotal (o usá `$env:VT_API_KEY`) | — |
+| `-VTMax <n>` | Tope de consultas a VirusTotal por escaneo | `20` |
+| `-Report` | Genera reporte HTML + JSON | (apagado) |
+| `-Json` | Genera solo el reporte JSON | (apagado) |
+| `-Pdf` | Genera también PDF (requiere Microsoft Edge) | (apagado) |
+| `-OutDir <ruta>` | Carpeta de salida de los reportes | `Documentos\pc_scanner` |
+| `-OpenReport` | Abre el HTML al terminar | (apagado) |
 
 ### Códigos de salida
 
@@ -177,13 +231,14 @@ sigue sin cargar, desbloquealo: `Unblock-File $PROFILE`.
 ## ⚠️ Limitaciones
 
 - Es un **detector heurístico**, no un antivirus: puede tener falsos positivos y **no** detecta todo el malware.
-- No analiza el contenido de los archivos ni calcula reputación online (eso lo hace VirusTotal).
+- La reputación online es **opcional** (`-VirusTotal`) y requiere API key; sin ella, el scan sigue siendo 100% local.
 - No modifica, mueve ni elimina nada. Vos decidís qué hacer con cada hallazgo.
 
 ## 🤝 Contribuir
 
-Issues y PRs bienvenidos. Ideas a futuro: integración con VirusTotal (hash lookup),
-exportar reporte a HTML/JSON, auto-elevación opcional de `scan`, versión para Linux/macOS en Bash.
+Issues y PRs bienvenidos. Ideas a futuro: detección de persistencia avanzada
+(DLL/COM hijacking, suscripciones WMI), validación de cadena de certificados,
+escaneo en paralelo, versión para Linux/macOS en Bash.
 
 ## 📄 Licencia
 

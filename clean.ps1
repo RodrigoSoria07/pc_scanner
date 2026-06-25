@@ -15,13 +15,42 @@
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File .\clean.ps1
-    powershell -ExecutionPolicy Bypass -File .\clean.ps1 -Force   # sin confirmar
+    powershell -ExecutionPolicy Bypass -File .\clean.ps1 -Force    # sin confirmar
+    powershell -ExecutionPolicy Bypass -File .\clean.ps1 -DryRun   # solo muestra que borraria
+
+.PARAMETER DryRun
+    Modo simulacion: lista lo que se borraria y cuanto espacio se liberaria,
+    pero NO borra nada. Util para revisar antes de ejecutar de verdad.
+
+.PARAMETER LogPath
+    Ruta del log de auditoria. Por defecto:
+    %LOCALAPPDATA%\pc_scanner\logs\clean_<fecha>.log
 #>
 
 [CmdletBinding()]
-param([switch]$Force, [switch]$Elevated)
+param([switch]$Force, [switch]$Elevated, [switch]$DryRun, [string]$LogPath)
 
 $ErrorActionPreference = 'SilentlyContinue'
+
+# --- Log de auditoria ------------------------------------------------------
+# Registramos TODO lo que se borra (o se borraria, en -DryRun) para tener
+# trazabilidad: que se elimino, cuanto se libero y que se salteo.
+if (-not $LogPath) {
+    $logDir = Join-Path $env:LOCALAPPDATA 'pc_scanner\logs'
+    try { if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null } } catch {}
+    $LogPath = Join-Path $logDir ("clean_{0}.log" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
+}
+
+function Write-Log {
+    param([string]$Message)
+    try {
+        $line = "{0}  {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Message
+        Add-Content -LiteralPath $LogPath -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue
+    } catch {}
+}
+
+Write-Log ("=== clean.ps1 iniciado === modo={0} usuario={1} equipo={2}" -f `
+    $(if ($DryRun) { 'DRY-RUN' } else { 'BORRADO' }), $env:USERNAME, $env:COMPUTERNAME)
 
 # --- Autoelevacion a administrador ----------------------------------------
 # Borrar C:\Windows\Temp y los temporales protegidos requiere permisos de
@@ -29,11 +58,13 @@ $ErrorActionPreference = 'SilentlyContinue'
 # (UAC). El switch -Elevated evita un bucle infinito si el usuario rechaza.
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
-if (-not $isAdmin -and -not $Elevated) {
+# En -DryRun no elevamos: es solo lectura, no tiene sentido pedir UAC.
+if (-not $isAdmin -and -not $Elevated -and -not $DryRun) {
     Write-Host ""
     Write-Host "  Pidiendo permisos de administrador (UAC) para una limpieza completa..." -ForegroundColor Cyan
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath, '-Elevated')
-    if ($Force) { $argList += '-Force' }
+    if ($Force)  { $argList += '-Force' }
+    if ($LogPath) { $argList += @('-LogPath', $LogPath) }
     try {
         Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $argList -ErrorAction Stop
         # La ventana elevada hace el trabajo; esta instancia termina aca.
@@ -112,12 +143,40 @@ Write-Host ("    CPU            : {0}%   (referencia)" -f $before.CpuPct) -Foreg
 Write-Host ("    RAM usada      : {0}%   (referencia)" -f $before.RamUsedPct) -ForegroundColor DarkGray
 Write-Host ""
 
+foreach ($t in $targets) { Write-Log ("ANTES  {0,-26} {1}" -f $t.Name, (Format-Size (Get-FolderSize $t.Path))) }
+
+# --- Modo simulacion (-DryRun): muestra y registra, NO borra --------------
+
+if ($DryRun) {
+    Write-Host ""
+    Write-Host "  *** MODO SIMULACION (-DryRun): no se borrara nada ***" -ForegroundColor Magenta
+    Write-Host ""
+    $wouldCount = 0
+    $wouldBytes = 0
+    foreach ($t in $targets) {
+        if (-not (Test-Path $t.Path)) { continue }
+        Get-ChildItem -LiteralPath $t.Path -Force -ErrorAction SilentlyContinue | ForEach-Object {
+            $sz = if ($_.PSIsContainer) { Get-FolderSize $_.FullName } else { [double]$_.Length }
+            $wouldCount++
+            $wouldBytes += $sz
+            Write-Log ("[DRY] se borraria: {0}  ({1})" -f $_.FullName, (Format-Size $sz))
+        }
+    }
+    Write-Host ("  Se borrarian {0} elemento(s), liberando ~{1}." -f $wouldCount, (Format-Size $wouldBytes)) -ForegroundColor Yellow
+    Write-Host ("  Detalle completo en el log: {0}" -f $LogPath) -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Log ("=== DRY-RUN: {0} elementos, ~{1} -> nada borrado ===" -f $wouldCount, (Format-Size $wouldBytes))
+    if ($Elevated) { Read-Host "  Presiona Enter para cerrar" | Out-Null }
+    exit 0
+}
+
 # --- Confirmacion ---------------------------------------------------------
 
 if (-not $Force) {
-    $ans = Read-Host "  Borrar estos temporales? (s/N)"
+    $ans = Read-Host "  Borrar estos temporales? (s/N)  [tip: -DryRun para simular primero]"
     if ($ans -notmatch '^[sSyY]') {
         Write-Host "  Cancelado. No se borro nada." -ForegroundColor Yellow
+        Write-Log "Cancelado por el usuario. Nada borrado."
         exit 0
     }
 }
@@ -127,13 +186,18 @@ if (-not $Force) {
 Write-Host ""
 Write-Host "  Limpiando..." -ForegroundColor Cyan
 $skipped = 0
+$deleted = 0
 foreach ($t in $targets) {
     if (-not (Test-Path $t.Path)) { continue }
     Get-ChildItem -LiteralPath $t.Path -Force -ErrorAction SilentlyContinue | ForEach-Object {
+        $full = $_.FullName
         try {
-            Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction Stop
+            Remove-Item -LiteralPath $full -Recurse -Force -ErrorAction Stop
+            $deleted++
+            Write-Log ("BORRADO  {0}" -f $full)
         } catch {
             $skipped++   # en uso / sin permisos -> se saltea
+            Write-Log ("SALTADO  {0}  ({1})" -f $full, $_.Exception.Message)
         }
     }
 }
@@ -165,7 +229,11 @@ if ($skipped -gt 0) {
 }
 Write-Host ""
 Write-Host "  Nota: limpiar temporales libera DISCO, no baja la CPU." -ForegroundColor DarkGray
+Write-Host ("  Log de auditoria: {0}" -f $LogPath) -ForegroundColor DarkGray
 Write-Host ""
+
+Write-Log ("=== Resultado: {0} borrados, {1} saltados, liberado {2} ===" -f `
+    $deleted, $skipped, (Format-Size ([math]::Max($tempFreed, 0))))
 
 # La ventana elevada es independiente y se cerraria sola: pausamos para que
 # se pueda leer el resultado.
